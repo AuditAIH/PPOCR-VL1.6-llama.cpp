@@ -78,7 +78,7 @@ llama-server \
 wget -O ./paddleocr_vl_demo.png https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/paddleocr_vl_demo.png && llama-cli -m ./PaddleOCR-VL-1.6-GGUF.gguf --mmproj ./PaddleOCR-VL-1.6-GGUF-mmproj.gguf -p 'OCR:' --image ./paddleocr_vl_demo.png --single-turn
 ```
 
-# 或者从8118端口直接解析
+## 或者从8118端口直接解析
 ```
 curl -L -o ./paddleocr_vl_demo.png https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/paddleocr_vl_demo.png && \
 cat << EOF | curl -s -X POST http://localhost:8118/v1/chat/completions -H "Content-Type: application/json" -d @- | jq -r '.choices[0].message.content'
