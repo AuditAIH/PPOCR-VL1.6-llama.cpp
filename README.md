@@ -1,3 +1,9 @@
+# 快速开始
+```
+wget https://gh-proxy.org/https://raw.githubusercontent.com/AuditAIH/PPOCR-VL1.6-llama.cpp/main/start_llama_ppocrvl1.6.sh -O start_llama_ppocrvl1.6.sh
+bash start_llama_ppocrvl1.6.sh
+```
+
 ## 直接执行二进制程序
 
 ```
