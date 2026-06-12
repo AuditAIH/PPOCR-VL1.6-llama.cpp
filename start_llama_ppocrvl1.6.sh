@@ -24,10 +24,8 @@ START_SCRIPT_NAME="start_up_llama_ppocrvl1.6.sh"
 URL_MM_PROJ="https://www.modelscope.cn/models/Aid003/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF-mmproj.gguf"
 URL_MAIN_MODEL="https://www.modelscope.cn/models/Aid003/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF.gguf"
 
-# 原始境外依赖包地址（国内直连失败）
-RAW_TAR_URL="https://github.com/AuditAIH/PPOCR-VL1.6-llama.cpp/releases/download/1.0.1/ppocrvl1.6_cuda.tar.gz"
-# 国内镜像代理地址（推荐使用，解决境外无法访问问题）
-TAR_URL="https://gh-proxy.org/${RAW_TAR_URL}"
+# 原始境外依赖包地址（国内直连失败请尝试代理地址）
+TAR_URL="https://github.com/AuditAIH/PPOCR-VL1.6-llama.cpp/releases/download/1.0.1/ppocrvl1.6_cuda.tar.gz"
 
 # ===================== 2. 系统依赖检测 =====================
 check_dependency() {
