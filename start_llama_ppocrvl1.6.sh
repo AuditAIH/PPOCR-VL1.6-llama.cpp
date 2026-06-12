@@ -25,7 +25,7 @@ START_SCRIPT_FULLPATH="${SCRIPT_ROOT}/${START_SCRIPT_NAME}"
 
 URL_MM_PROJ="https://www.modelscope.cn/models/Aid003/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF-mmproj.gguf"
 URL_MAIN_MODEL="https://www.modelscope.cn/models/Aid003/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF.gguf"
-TAR_URL="https://github.com/AuditAIH/PPOCR-VL1.6-llama.cpp/releases/download/1.0.1/ppocrvl1.6_cuda.tar.gz"
+TAR_URL="https://github.com/AuditAIH/llama.cpp_rerank/releases/download/1.0.1/ppocrvl1.6_cuda.tar.gz"
 DEMO_PNG="paddleocr_vl_demo.png"
 TMP_JSON="/tmp/ocr_req_tmp.json"
 
