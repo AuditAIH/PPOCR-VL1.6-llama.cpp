@@ -12,7 +12,7 @@ set -euo pipefail
 # 7. OCR测试结果仅输出前100字符
 ###########################################################
 
-# ===================== 全局路径定义（基于当前执行目录） =====================
+# ===================== 全局路径定义 =====================
 SCRIPT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 WORK_DIR_NAME="llama.cpp_ppocrvl1.6"
 WORK_FULL_PATH="${SCRIPT_ROOT}/${WORK_DIR_NAME}"
@@ -27,6 +27,7 @@ URL_MM_PROJ="https://www.modelscope.cn/models/Aid003/PaddleOCR-VL-1.6-GGUF/resol
 URL_MAIN_MODEL="https://www.modelscope.cn/models/Aid003/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF.gguf"
 TAR_URL="https://github.com/AuditAIH/PPOCR-VL1.6-llama.cpp/releases/download/1.0.1/ppocrvl1.6_cuda.tar.gz"
 DEMO_PNG="paddleocr_vl_demo.png"
+TMP_JSON="/tmp/ocr_req_tmp.json"
 
 # ===================== 工具函数 =====================
 check_dependency() {
@@ -46,7 +47,7 @@ check_dependency nc
 check_dependency wget
 echo "✅ 依赖检测通过"
 
-# ===================== 2. 检测目标文件夹 & 内部所有文件 =====================
+# ===================== 2. 检测目标文件夹 & 内部文件 =====================
 echo -e "\n============================================="
 echo "[2/8] 检测工作文件夹：${WORK_DIR_NAME}"
 if [ ! -d "${WORK_FULL_PATH}" ]; then
@@ -142,9 +143,9 @@ echo "🧠 主模型：${CURR_WORK_ABS}/${MAIN_MODEL_FILE}"
 echo "🚀 后续启动脚本：bash ${START_SCRIPT_FULLPATH}"
 echo -e "\n💡 日常启动命令：./${START_SCRIPT_NAME}"
 
-# ===================== 7. 启动服务 + 端口检测 =====================
+# ===================== 7. 临时后台启动 + 端口检测 + OCR测试 =====================
 echo -e "\n============================================="
-echo "[7/8] 启动OCR服务（端口 8118）"
+echo "[7/8] 临时启动服务用于功能测试（端口 8118）"
 cd "${CURR_WORK_ABS}" || exit 1
 export LD_LIBRARY_PATH="${CURR_WORK_ABS}:$LD_LIBRARY_PATH"
 echo "🔧 动态库加载路径：${LD_LIBRARY_PATH}"
@@ -158,9 +159,9 @@ echo "🔧 动态库加载路径：${LD_LIBRARY_PATH}"
   --temp 0 --parallel 12 --flash-attn on -b 2048 &
 
 SERVER_PID=$!
-echo "🚀 服务临时后台启动，进程PID：${SERVER_PID}"
+echo "🚀 临时服务启动，PID：${SERVER_PID}"
 
-# 等待端口
+# 等待端口就绪
 echo "⌛ 等待 8118 端口就绪..."
 WAIT_SEC=0
 while ! nc -z localhost 8118; do
@@ -175,19 +176,18 @@ while ! nc -z localhost 8118; do
 done
 echo "✅ 服务端口就绪"
 
-# 额外延时：等待接口初始化完成（解决卡死）
+# 等待接口完全初始化
 echo "⌛ 等待接口初始化完成..."
 sleep 5
 
-# ===================== 8. OCR测试（修复语法错误） =====================
+# ===================== 8. OCR测试（文件传参，解决超长参数） =====================
 echo -e "\n============================================="
 echo "[8/8] 执行OCR功能测试"
 
 [ ! -f "${DEMO_PNG}" ] && curl -L -o "./${DEMO_PNG}" https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/paddleocr_vl_demo.png
 
-# 单独构造JSON，彻底规避语法错误
 IMG_B64=$(base64 -w 0 "./${DEMO_PNG}")
-JSON_BODY=$(cat <<JSON
+cat > "${TMP_JSON}" << EOF
 {
   "model": "paddleocr-vl",
   "messages": [
@@ -201,19 +201,30 @@ JSON_BODY=$(cat <<JSON
   ],
   "temperature": 0
 }
-JSON
-)
+EOF
 
 echo "正在识别图片..."
 OCR_CONTENT=$(curl -s -X POST http://localhost:8118/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d "${JSON_BODY}" | jq -r '.choices[0].message.content' | head -c 100)
+  -d @"${TMP_JSON}" | jq -r '.choices[0].message.content' | head -c 100)
+
+rm -f "${TMP_JSON}"
 
 echo -e "\n📝 OCR识别结果（前100字）："
 echo "${OCR_CONTENT}"
 
-# ===================== 切回前台常驻 =====================
+# ===================== 关闭临时进程，全新前台正式启动 =====================
 echo -e "\n============================================="
-echo "🎉 OCR测试完成，服务切换为前台运行"
+echo "✅ 测试完成，关闭临时服务，准备前台正式运行"
+kill ${SERVER_PID}
+sleep 2
+
+echo "🎉 正式前台启动OCR服务（端口8118）"
 echo "💡 停止服务：按下 Ctrl + C"
-fg ${SERVER_PID}
+# 纯前台启动，终端独占
+./llama-server \
+  -m ./PaddleOCR-VL-1.6-GGUF.gguf \
+  --mmproj ./PaddleOCR-VL-1.6-GGUF-mmproj.gguf  \
+  --port 8118  \
+  --host 0.0.0.0 \
+  --temp 0 --parallel 12 --flash-attn on -b 2048
