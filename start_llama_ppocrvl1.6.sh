@@ -121,7 +121,7 @@ echo -e "\n============================================="
 echo "[5/8] 生成后续启动脚本（存放于根目录）"
 cd "${SCRIPT_ROOT}" || exit 1
 
-# 写入启动脚本内容
+# 写入启动脚本内容（已改为前台运行，无 &）
 cat > "${START_SCRIPT_NAME}" << 'EOF'
 #!/bin/bash
 set -euo pipefail
@@ -136,7 +136,7 @@ cd "${WORK_PATH}" || exit 1
 CUR_DIR=$(pwd)
 export LD_LIBRARY_PATH="${CUR_DIR}:$LD_LIBRARY_PATH"
 
-# 启动OCR服务
+# 启动OCR服务（前台运行）
 ./llama-server \
   -m ./PaddleOCR-VL-1.6-GGUF.gguf \
   --mmproj ./PaddleOCR-VL-1.6-GGUF-mmproj.gguf  \
@@ -168,16 +168,16 @@ cd "${CURR_WORK_ABS}" || exit 1
 export LD_LIBRARY_PATH="${CURR_WORK_ABS}:$LD_LIBRARY_PATH"
 echo "🔧 动态库加载路径：${LD_LIBRARY_PATH}"
 
-# 后台启动服务
+# 临时后台启动服务，用于端口检测+OCR测试
 ./llama-server \
   -m ./PaddleOCR-VL-1.6-GGUF.gguf \
   --mmproj ./PaddleOCR-VL-1.6-GGUF-mmproj.gguf  \
   --port 8118  \
   --host 0.0.0.0 \
-  --temp 0 --parallel 12 --flash-attn on -b 2048
+  --temp 0 --parallel 12 --flash-attn on -b 2048 &
 
 SERVER_PID=$!
-echo "🚀 服务已启动，进程PID：${SERVER_PID}"
+echo "🚀 服务临时后台启动，进程PID：${SERVER_PID}"
 
 # 等待端口监听（超时60秒）
 echo "⌛ 等待 8118 端口就绪..."
@@ -225,8 +225,9 @@ REQ
 echo -e "\n📝 OCR识别结果（前100字）："
 echo "${OCR_CONTENT}"
 
-# 前台阻塞保活服务
+# ===================== 切换为前台常驻运行 =====================
 echo -e "\n============================================="
-echo "🎉 全部流程执行完毕，服务持续运行中"
+echo "🎉 OCR测试完成，服务切换为前台运行"
 echo "💡 停止服务：按下 Ctrl + C"
-wait ${SERVER_PID}
+# 将后台进程切回前台，脚本阻塞等待
+fg ${SERVER_PID}
