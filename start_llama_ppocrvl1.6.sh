@@ -174,7 +174,7 @@ echo "🔧 动态库加载路径：${LD_LIBRARY_PATH}"
   --mmproj ./PaddleOCR-VL-1.6-GGUF-mmproj.gguf  \
   --port 8118  \
   --host 0.0.0.0 \
-  --temp 0 --parallel 12 --flash-attn on -b 2048 &
+  --temp 0 --parallel 12 --flash-attn on -b 2048
 
 SERVER_PID=$!
 echo "🚀 服务已启动，进程PID：${SERVER_PID}"
