@@ -1,6 +1,6 @@
-# 快速开始
+# 快速开始 （Quick Start） （如需代理请在github的http前面追加https://gh-proxy.org/
 ```
-wget https://gh-proxy.org/https://raw.githubusercontent.com/AuditAIH/PPOCR-VL1.6-llama.cpp/main/start_llama_ppocrvl1.6.sh -O start_llama_ppocrvl1.6.sh
+wget https://raw.githubusercontent.com/AuditAIH/PPOCR-VL1.6-llama.cpp/main/start_llama_ppocrvl1.6.sh -O start_llama_ppocrvl1.6.sh
 bash start_llama_ppocrvl1.6.sh
 ```
 
