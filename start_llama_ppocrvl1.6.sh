@@ -13,26 +13,19 @@ set -euo pipefail
 ###########################################################
 
 # ===================== 全局路径定义（基于当前执行目录） =====================
-# 脚本执行的【当前根目录】
 SCRIPT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-# 目标工作文件夹：固定为 根目录/llama.cpp_ppocrvl1.6
 WORK_DIR_NAME="llama.cpp_ppocrvl1.6"
 WORK_FULL_PATH="${SCRIPT_ROOT}/${WORK_DIR_NAME}"
 
-# 核心文件名称
 MM_PROJ_FILE="PaddleOCR-VL-1.6-GGUF-mmproj.gguf"
 MAIN_MODEL_FILE="PaddleOCR-VL-1.6-GGUF.gguf"
 TAR_PACKAGE="ppocrvl1.6_cuda.tar.gz"
-# 后续启动脚本：创建在【根目录】
 START_SCRIPT_NAME="start_up_llama_ppocrvl1.6.sh"
 START_SCRIPT_FULLPATH="${SCRIPT_ROOT}/${START_SCRIPT_NAME}"
 
-# 下载地址（外网直连，无代理）
 URL_MM_PROJ="https://www.modelscope.cn/models/Aid003/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF-mmproj.gguf"
 URL_MAIN_MODEL="https://www.modelscope.cn/models/Aid003/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF.gguf"
 TAR_URL="https://github.com/AuditAIH/PPOCR-VL1.6-llama.cpp/releases/download/1.0.1/ppocrvl1.6_cuda.tar.gz"
-
-# OCR测试图片
 DEMO_PNG="paddleocr_vl_demo.png"
 
 # ===================== 工具函数 =====================
@@ -63,7 +56,6 @@ else
     echo "✅ 已找到目标文件夹：${WORK_FULL_PATH}"
 fi
 
-# 进入工作目录，逐项检测内部文件
 cd "${WORK_FULL_PATH}" || exit 1
 echo -e "\n文件夹内文件预检："
 
@@ -79,7 +71,7 @@ else
     echo "  ℹ️  目录内暂无Shell脚本"
 fi
 
-# ===================== 3. 下载GGUF模型（断点续传，已有则跳过） =====================
+# ===================== 3. 下载GGUF模型 =====================
 echo -e "\n============================================="
 echo "[3/8] 检测并下载模型文件"
 
@@ -97,11 +89,10 @@ else
     echo "✅ ${MAIN_MODEL_FILE} 已存在，跳过下载"
 fi
 
-# ===================== 4. 处理CUDA压缩包（核心规则：有包就解压覆盖） =====================
+# ===================== 4. 处理CUDA压缩包 =====================
 echo -e "\n============================================="
 echo "[4/8] 处理CUDA依赖压缩包"
 
-# 规则1：tar包不存在 → 下载
 if [ ! -f "${TAR_PACKAGE}" ]; then
     echo "未找到压缩包，开始下载：${TAR_PACKAGE}"
     wget -c --progress=bar "${TAR_URL}"
@@ -109,34 +100,25 @@ else
     echo "✅ ${TAR_PACKAGE} 已存在，跳过下载"
 fi
 
-# 规则2：只要tar包存在，强制解压、覆盖本地文件（不再判断是否已解压）
 echo "开始解压 ${TAR_PACKAGE}，自动覆盖现有文件..."
 tar -zxvf "${TAR_PACKAGE}"
 echo "✅ 压缩包解压完成"
 
 CURR_WORK_ABS=$(pwd)
 
-# ===================== 5. 回到根目录，生成独立启动脚本 =====================
+# ===================== 5. 生成独立启动脚本 =====================
 echo -e "\n============================================="
 echo "[5/8] 生成后续启动脚本（存放于根目录）"
 cd "${SCRIPT_ROOT}" || exit 1
 
-# 写入启动脚本内容（已改为前台运行，无 &）
 cat > "${START_SCRIPT_NAME}" << 'EOF'
 #!/bin/bash
 set -euo pipefail
-
-# 启动脚本所在根目录
 RUN_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-# 固定进入根目录下的工作文件夹
 WORK_PATH="${RUN_ROOT}/llama.cpp_ppocrvl1.6"
 cd "${WORK_PATH}" || exit 1
-
-# 加载本地动态链接库
 CUR_DIR=$(pwd)
 export LD_LIBRARY_PATH="${CUR_DIR}:$LD_LIBRARY_PATH"
-
-# 启动OCR服务（前台运行）
 ./llama-server \
   -m ./PaddleOCR-VL-1.6-GGUF.gguf \
   --mmproj ./PaddleOCR-VL-1.6-GGUF-mmproj.gguf  \
@@ -149,7 +131,7 @@ chmod +x "${START_SCRIPT_NAME}"
 echo "✅ 启动脚本创建/更新成功"
 echo "📌 启动脚本绝对路径：${START_SCRIPT_FULLPATH}"
 
-# ===================== 6. 汇总所有文件绝对路径 =====================
+# ===================== 6. 汇总文件路径 =====================
 echo -e "\n============================================="
 echo "[6/8] 全文件路径汇总"
 echo "📂 工作文件夹：${WORK_FULL_PATH}"
@@ -160,15 +142,14 @@ echo "🧠 主模型：${CURR_WORK_ABS}/${MAIN_MODEL_FILE}"
 echo "🚀 后续启动脚本：bash ${START_SCRIPT_FULLPATH}"
 echo -e "\n💡 日常启动命令：./${START_SCRIPT_NAME}"
 
-# ===================== 7. 启动服务 & 等待端口就绪 =====================
+# ===================== 7. 启动服务 + 端口检测 =====================
 echo -e "\n============================================="
 echo "[7/8] 启动OCR服务（端口 8118）"
 cd "${CURR_WORK_ABS}" || exit 1
-
 export LD_LIBRARY_PATH="${CURR_WORK_ABS}:$LD_LIBRARY_PATH"
 echo "🔧 动态库加载路径：${LD_LIBRARY_PATH}"
 
-# 临时后台启动服务，用于端口检测+OCR测试
+# 临时后台启动
 ./llama-server \
   -m ./PaddleOCR-VL-1.6-GGUF.gguf \
   --mmproj ./PaddleOCR-VL-1.6-GGUF-mmproj.gguf  \
@@ -179,14 +160,14 @@ echo "🔧 动态库加载路径：${LD_LIBRARY_PATH}"
 SERVER_PID=$!
 echo "🚀 服务临时后台启动，进程PID：${SERVER_PID}"
 
-# 等待端口监听（超时60秒）
+# 等待端口
 echo "⌛ 等待 8118 端口就绪..."
 WAIT_SEC=0
 while ! nc -z localhost 8118; do
     sleep 2
     WAIT_SEC=$((WAIT_SEC + 2))
     if [ ${WAIT_SEC} -ge 60 ]; then
-        echo "[❌ 错误] 服务启动超时，请检查文件权限与依赖"
+        echo "[❌ 错误] 服务启动超时"
         kill ${SERVER_PID} 2>/dev/null || true
         exit 1
     fi
@@ -194,18 +175,19 @@ while ! nc -z localhost 8118; do
 done
 echo "✅ 服务端口就绪"
 
-# ===================== 8. OCR测试（仅输出前100字） =====================
+# 额外延时：等待接口初始化完成（解决卡死）
+echo "⌛ 等待接口初始化完成..."
+sleep 5
+
+# ===================== 8. OCR测试（修复语法错误） =====================
 echo -e "\n============================================="
 echo "[8/8] 执行OCR功能测试"
 
-# 下载测试图片
 [ ! -f "${DEMO_PNG}" ] && curl -L -o "./${DEMO_PNG}" https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/paddleocr_vl_demo.png
 
-# 调用接口并截取前100字符
-echo "正在识别图片..."
-OCR_CONTENT=$(curl -s -X POST http://localhost:8118/v1/chat/completions \
--H "Content-Type: application/json" \
--d @- << REQ
+# 单独构造JSON，彻底规避语法错误
+IMG_B64=$(base64 -w 0 "./${DEMO_PNG}")
+JSON_BODY=$(cat <<JSON
 {
   "model": "paddleocr-vl",
   "messages": [
@@ -213,21 +195,25 @@ OCR_CONTENT=$(curl -s -X POST http://localhost:8118/v1/chat/completions \
       "role": "user",
       "content": [
         {"type":"text","text":"OCR:"},
-        {"type":"image_url","image_url":{"url":"data:image/png;base64,$(base64 -w0 ./${DEMO_PNG})"}}
+        {"type":"image_url","image_url":{"url":"data:image/png;base64,${IMG_B64}"}}
       ]
     }
   ],
   "temperature": 0
 }
-REQ
-| jq -r '.choices[0].message.content' | head -c 100)
+JSON
+)
+
+echo "正在识别图片..."
+OCR_CONTENT=$(curl -s -X POST http://localhost:8118/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d "${JSON_BODY}" | jq -r '.choices[0].message.content' | head -c 100)
 
 echo -e "\n📝 OCR识别结果（前100字）："
 echo "${OCR_CONTENT}"
 
-# ===================== 切换为前台常驻运行 =====================
+# ===================== 切回前台常驻 =====================
 echo -e "\n============================================="
 echo "🎉 OCR测试完成，服务切换为前台运行"
 echo "💡 停止服务：按下 Ctrl + C"
-# 将后台进程切回前台，脚本阻塞等待
 fg ${SERVER_PID}
