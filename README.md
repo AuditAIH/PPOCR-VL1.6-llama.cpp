@@ -39,3 +39,80 @@ cmake --build build --config Release -j$(nproc)
 ```
 编译完成后，运行
 `./build/bin/llama-server -h` 测试
+
+
+## 下载PaddleOCR-VL1.6模型文件
+```
+modelscope download --model Aid003/PaddleOCR-VL-1.6-GGUF README.md PaddleOCR-VL-1.6-GGUF-mmproj.gguf PaddleOCR-VL-1.6-GGUF.gguf
+# 或使用wget下载
+# 下载投影文件
+wget -c https://www.modelscope.cn/models/Aid003/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF-mmproj.gguf
+
+# 下载主模型文件
+wget -c https://www.modelscope.cn/models/Aid003/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF.gguf
+```
+
+## 启动OCR识别
+```
+# 直接启动8118端口
+llama-server \
+    -m /path/to/PaddleOCR-VL-1.6-GGUF.gguf \
+    --mmproj /path/to/PaddleOCR-VL-1.6-GGUF-mmproj.gguf  \
+    --port 8118  \
+    --host 0.0.0.0 \
+    --temp 0
+
+# 或者加速启动
+
+#!/bin/bash
+#cd /root/llama.cpp/build/bin || exit
+#export LD_LIBRARY_PATH=/usr/local/lib/ollama/cuda_v13:$LD_LIBRARY_PATH
+./llama-server \
+  -m ./PaddleOCR-VL-1.6-GGUF.gguf \
+  --mmproj ./PaddleOCR-VL-1.6-GGUF-mmproj.gguf  \
+  --port 8118  \
+  --host 0.0.0.0 \
+  --temp 0 --parallel 12 --flash-attn on -b 2048
+
+# 直接请求
+wget -O ./paddleocr_vl_demo.png https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/paddleocr_vl_demo.png && llama-cli -m ./PaddleOCR-VL-1.6-GGUF.gguf --mmproj ./PaddleOCR-VL-1.6-GGUF-mmproj.gguf -p 'OCR:' --image ./paddleocr_vl_demo.png --single-turn
+```
+
+# 或者从8118端口直接解析
+```
+curl -L -o ./paddleocr_vl_demo.png https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/paddleocr_vl_demo.png && \
+cat << EOF | curl -s -X POST http://localhost:8118/v1/chat/completions -H "Content-Type: application/json" -d @- | jq -r '.choices[0].message.content'
+{
+  "model": "paddleocr-vl",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "OCR:"
+        },
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/png;base64,$(base64 -w0 ./paddleocr_vl_demo.png)"
+          }
+        }
+      ]
+    }
+  ],
+  "temperature": 0
+}
+EOF
+```
+
+## 或者结合PaddleOCR进行版面解析 (提前安装好PaddlePaddle和PaddleOCR）
+### [参考官网安装步骤](https://www.paddleocr.ai/main/quick_start.html)
+```
+python -m pip install paddlepaddle-gpu==3.3.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/
+# uv pip install paddlepaddle-gpu==3.3.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/
+python -m pip install "paddleocr[all]"
+# uv pip install "paddleocr[all]"
+paddleocr doc_parser --input https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/paddleocr_vl_demo.png --vl_rec_backend llama-cpp-server --vl_rec_server_url http://localhost:8118/v1
+
+```
