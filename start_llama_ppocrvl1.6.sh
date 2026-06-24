@@ -14,6 +14,11 @@ HASH_FILE="${MODEL_DIR}/model_hash.txt"
 MODEL_ABS="${MODEL_DIR}/${MAIN_FILE}"
 MMPROJ_ABS="${MODEL_DIR}/${MMPROJ_FILE}"
 
+# ========== 新增：模型标准SHA256（从ModelScope模型文件页获取填入） ==========
+STD_SHA256_MAIN="f3ae46ec885050acf4b3d31944431e1fd90d50664fb09126af4a3c050ba14ee8"
+STD_SHA256_MMPROJ="204d757d7610d9b3faab10d506d69e5b244e32bf765e2bab2d0167e65e0a058a"
+# ========================================================================
+
 # 下载地址
 URL_MAIN_MODEL="https://www.modelscope.cn/models/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/resolve/master/${MAIN_FILE}"
 URL_MM_PROJ="https://www.modelscope.cn/models/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/resolve/master/${MMPROJ_FILE}"
@@ -32,6 +37,12 @@ error_exit() {
 }
 info_log() {
     echo -e "\033[32m[INFO] $1\033[0m"
+}
+
+# ========== 新增：计算文件SHA256工具函数 ==========
+calc_sha256() {
+    local file_path="$1"
+    sha256sum "${file_path}" | awk '{print $1}'
 }
 
 # ========== 1. 检测GPU + 驱动版本，匹配固定CUDA后端 ==========
@@ -89,12 +100,13 @@ download_file() {
     info_log "下载完成: ${fname}"
 }
 
-# ========== 4. 文件校验逻辑（仅检查存在性，不计算哈希） ==========
+# ========== 4. 文件校验逻辑（核心修改：无哈希文件时先算本地哈希） ==========
 info_log "4. 校验模型文件"
 NEED_DOWNLOAD_MAIN=0
 NEED_DOWNLOAD_MM=0
 
 if [ -f "${HASH_FILE}" ]; then
+    # 原有逻辑完全保留：有标记文件仅检查存在性
     info_log "检测到哈希标记文件，仅校验模型文件是否存在（不检测内容）"
     if [ -f "${MAIN_FILE}" ] && [ -f "${MMPROJ_FILE}" ]; then
         info_log "模型文件齐全，跳过下载"
@@ -104,19 +116,49 @@ if [ -f "${HASH_FILE}" ]; then
         [ ! -f "${MMPROJ_FILE}" ] && NEED_DOWNLOAD_MM=1
     fi
 else
-    info_log "无哈希标记文件，需要下载所有模型文件（确保完整性）"
-    NEED_DOWNLOAD_MAIN=1
-    NEED_DOWNLOAD_MM=1
+    # 仅修改此处：无哈希文件时，先计算本地文件哈希做完整性校验
+    info_log "无哈希标记文件，先计算本地模型文件哈希进行完整性校验"
+
+    # 校验主模型文件
+    if [ -f "${MAIN_FILE}" ] && [ -n "${STD_SHA256_MAIN}" ]; then
+        local_sha_main=$(calc_sha256 "${MAIN_FILE}")
+        if [ "${local_sha_main}" = "${STD_SHA256_MAIN}" ]; then
+            info_log "主模型文件哈希校验通过，无需下载"
+        else
+            info_log "主模型文件哈希不匹配，文件损坏，需重新下载"
+            NEED_DOWNLOAD_MAIN=1
+        fi
+    else
+        info_log "主模型文件不存在或未配置标准哈希，执行下载"
+        NEED_DOWNLOAD_MAIN=1
+    fi
+
+    # 校验mmproj文件
+    if [ -f "${MMPROJ_FILE}" ] && [ -n "${STD_SHA256_MMPROJ}" ]; then
+        local_sha_mm=$(calc_sha256 "${MMPROJ_FILE}")
+        if [ "${local_sha_mm}" = "${STD_SHA256_MMPROJ}" ]; then
+            info_log "mmproj文件哈希校验通过，无需下载"
+        else
+            info_log "mmproj文件哈希不匹配，文件损坏，需重新下载"
+            NEED_DOWNLOAD_MM=1
+        fi
+    else
+        info_log "mmproj文件不存在或未配置标准哈希，执行下载"
+        NEED_DOWNLOAD_MM=1
+    fi
 fi
 
-# ========== 5. 下载缺失文件（覆盖模式） ==========
+# ========== 5. 下载缺失文件 ==========
 if [ "${NEED_DOWNLOAD_MAIN}" -eq 1 ] || [ "${NEED_DOWNLOAD_MM}" -eq 1 ]; then
     cd "${MODEL_DIR}"
     [ "${NEED_DOWNLOAD_MAIN}" -eq 1 ] && download_file "${MAIN_FILE}" "${URL_MAIN_MODEL}"
     [ "${NEED_DOWNLOAD_MM}" -eq 1 ] && download_file "${MMPROJ_FILE}" "${URL_MM_PROJ}"
     
-    # 创建哈希标记文件（仅作为完成标记，不存储哈希值）
-    touch "${HASH_FILE}"
+    # 下载完成后写入标准哈希到标记文件，下次启动直接走存在分支
+    cat > "${HASH_FILE}" <<EOF
+${MAIN_FILE}: ${STD_SHA256_MAIN}
+${MMPROJ_FILE}: ${STD_SHA256_MMPROJ}
+EOF
     info_log "模型下载完成，哈希标记已创建"
 fi
 
