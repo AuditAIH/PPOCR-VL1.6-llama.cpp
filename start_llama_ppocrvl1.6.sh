@@ -1,230 +1,152 @@
 #!/bin/bash
 set -euo pipefail
+IFS=$'\n\t'
 
-###########################################################
-# 逻辑规则（按要求定制）
-# 1. 根目录 = 脚本执行的当前目录，启动sh文件创建在根目录
-# 2. 固定查找根目录下的 llama.cpp_ppocrvl1.6 工作文件夹
-# 3. tar压缩包：不存在则下载，存在则跳过下载；只要有tar包就强制解压覆盖
-# 4. 全程外网直连，无国内代理/镜像
-# 5. 自动检测文件夹、程序、模型、压缩包、sh脚本
-# 6. 输出所有文件绝对路径，自动生成独立启动脚本
-# 7. OCR测试结果仅输出前100字符
-###########################################################
+# ====================== 配置区（动态适配用户目录） ======================
+OLLAMA_ROOT="/usr/local/lib/ollama"
+LLAMA_SERVER_BIN="${OLLAMA_ROOT}/llama-server"
 
-# ===================== 全局路径定义 =====================
-SCRIPT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-WORK_DIR_NAME="llama.cpp_ppocrvl1.6"
-WORK_FULL_PATH="${SCRIPT_ROOT}/${WORK_DIR_NAME}"
+# 模型缓存路径 - modelscope默认存储路径（目录名中点号替换为下划线）
+MODEL_DIR="${HOME}/.cache/modelscope/hub/models/PaddlePaddle/PaddleOCR-VL-1___6-GGUF"
+MAIN_FILE="PaddleOCR-VL-1.6-GGUF.gguf"
+MMPROJ_FILE="PaddleOCR-VL-1.6-GGUF-mmproj.gguf"
+HASH_FILE="${MODEL_DIR}/model_hash.txt"
+MODEL_ABS="${MODEL_DIR}/${MAIN_FILE}"
+MMPROJ_ABS="${MODEL_DIR}/${MMPROJ_FILE}"
 
-MM_PROJ_FILE="PaddleOCR-VL-1.6-GGUF-mmproj.gguf"
-MAIN_MODEL_FILE="PaddleOCR-VL-1.6-GGUF.gguf"
-TAR_PACKAGE="ppocrvl1.6_cuda.tar.gz"
-START_SCRIPT_NAME="start_up_llama_ppocrvl1.6.sh"
-START_SCRIPT_FULLPATH="${SCRIPT_ROOT}/${START_SCRIPT_NAME}"
+# 下载地址
+URL_MAIN_MODEL="https://www.modelscope.cn/models/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/resolve/master/${MAIN_FILE}"
+URL_MM_PROJ="https://www.modelscope.cn/models/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/resolve/master/${MMPROJ_FILE}"
 
-URL_MM_PROJ="https://www.modelscope.cn/models/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF-mmproj.gguf"
-URL_MAIN_MODEL="https://www.modelscope.cn/models/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF.gguf"
-TAR_URL="https://github.com/AuditAIH/llama.cpp_rerank/releases/download/1.0.1/ppocrvl1.6_cuda.tar.gz"
-DEMO_PNG="paddleocr_vl_demo.png"
-TMP_JSON="/tmp/ocr_req_tmp.json"
+# 服务固定参数
+PORT=8118
+HOST="0.0.0.0"
+TEMP=0
+CUDA_DEV=0
+START_SCRIPT_NAME="llama.cpp_paddleocr_vl_1.6.sh"
+# ========================================================================
 
-# ===================== 工具函数 =====================
-check_dependency() {
-    if ! command -v "$1" &> /dev/null; then
-        echo "[❌ 错误] 缺失工具：$1，请先安装后再运行！"
-        exit 1
-    fi
+error_exit() {
+    echo -e "\033[31m[ERROR] $1\033[0m" >&2
+    exit 1
+}
+info_log() {
+    echo -e "\033[32m[INFO] $1\033[0m"
 }
 
-# ===================== 1. 检测系统依赖 =====================
-echo "============================================="
-echo "[1/8] 检测系统必备依赖"
-check_dependency curl
-check_dependency jq
-check_dependency base64
-check_dependency nc
-check_dependency wget
-echo "✅ 依赖检测通过"
-
-# ===================== 2. 检测目标文件夹 & 内部文件 =====================
-echo -e "\n============================================="
-echo "[2/8] 检测工作文件夹：${WORK_DIR_NAME}"
-if [ ! -d "${WORK_FULL_PATH}" ]; then
-    echo "⚠️  文件夹不存在，自动创建：${WORK_FULL_PATH}"
-    mkdir -p "${WORK_FULL_PATH}"
-else
-    echo "✅ 已找到目标文件夹：${WORK_FULL_PATH}"
+# ========== 1. 检测GPU + 驱动版本，匹配固定CUDA后端 ==========
+info_log "1. 检测NVIDIA GPU与驱动版本"
+if ! command -v nvidia-smi &> /dev/null; then
+    error_exit "未检测到NVIDIA显卡驱动，仅支持GPU模式，不支持CPU运行"
 fi
 
-cd "${WORK_FULL_PATH}" || exit 1
-echo -e "\n文件夹内文件预检："
+DRIVER_MAJOR=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 | cut -d. -f1)
+if [ -z "${DRIVER_MAJOR}" ]; then
+    error_exit "无法读取NVIDIA驱动版本，请检查显卡驱动安装"
+fi
+info_log "NVIDIA驱动主版本：${DRIVER_MAJOR}"
 
-[ -f "./llama-server" ] && echo "  ✅ 存在程序：llama-server" || echo "  ⚠️  缺失程序：llama-server"
-[ -f "${MM_PROJ_FILE}" ] && echo "  ✅ 存在模型：${MM_PROJ_FILE}" || echo "  ⚠️  缺失模型：${MM_PROJ_FILE}"
-[ -f "${MAIN_MODEL_FILE}" ] && echo "  ✅ 存在模型：${MAIN_MODEL_FILE}" || echo "  ⚠️  缺失模型：${MAIN_MODEL_FILE}"
-[ -f "${TAR_PACKAGE}" ] && echo "  ✅ 存在压缩包：${TAR_PACKAGE}" || echo "  ⚠️  缺失压缩包：${TAR_PACKAGE}"
+# ========== 2. 检测Ollama程序，未安装则自动执行官方命令安装 ==========
+info_log "2. 检测Ollama运行环境"
+if [ ! -f "${LLAMA_SERVER_BIN}" ]; then
+    info_log "未检测到Ollama，开始自动执行官方命令安装..."
+    curl -fsSL https://ollama.com/install.sh | sh
+    
+    if [ ! -f "${LLAMA_SERVER_BIN}" ]; then
+        error_exit "Ollama自动安装后仍未找到llama-server，请检查上方安装日志"
+    fi
+    info_log "Ollama安装完成"
+fi
+info_log "Ollama环境校验通过"
 
-SH_NUM=$(find . -maxdepth 1 -name "*.sh" | wc -l)
-if [ "${SH_NUM}" -gt 0 ]; then
-    echo "  ✅ 目录内已有 ${SH_NUM} 个Shell脚本"
+if [ "${DRIVER_MAJOR}" -ge 550 ] && [ -f "${OLLAMA_ROOT}/cuda_v13/libggml-cuda.so" ]; then
+    CUDA_LIB_DIR="${OLLAMA_ROOT}/cuda_v13"
+    info_log "驱动支持CUDA 13，匹配cuda_v13后端"
+elif [ -f "${OLLAMA_ROOT}/cuda_v12/libggml-cuda.so" ]; then
+    CUDA_LIB_DIR="${OLLAMA_ROOT}/cuda_v12"
+    info_log "匹配cuda_v12后端"
 else
-    echo "  ℹ️  目录内暂无Shell脚本"
+    error_exit "Ollama目录无可用CUDA后端，请手动执行 curl -fsSL https://ollama.com/install.sh | sh 重装最新版"
 fi
 
-# ===================== 3. 下载GGUF模型 =====================
-echo -e "\n============================================="
-echo "[3/8] 检测并下载模型文件"
+GGML_BACKEND_PATH="${CUDA_LIB_DIR}/libggml-cuda.so"
+LD_LIB_PATH="${OLLAMA_ROOT}:${CUDA_LIB_DIR}"
 
-if [ ! -f "${MM_PROJ_FILE}" ]; then
-    echo "开始下载投影模型：${MM_PROJ_FILE}"
-    wget -c --progress=bar "${URL_MM_PROJ}"
+# ========== 3. 模型目录初始化 ==========
+info_log "3. 初始化模型缓存目录：${MODEL_DIR}"
+mkdir -p "${MODEL_DIR}" || error_exit "创建模型目录失败"
+cd "${MODEL_DIR}" || error_exit "进入模型目录失败"
+
+# 下载函数：覆盖模式（先删除已有文件，不使用 -c 断点续传，避免文件损坏）
+download_file() {
+    local fname="$1" furl="$2"
+    info_log "开始下载：${fname}"
+    # 覆盖模式：先删除可能存在的残留/损坏文件，确保每次都是完整的全新下载
+    rm -f "${fname}"
+    if ! wget --tries=3 --timeout=30 --progress=bar "${furl}"; then
+        error_exit "下载失败: ${fname}"
+    fi
+    info_log "下载完成: ${fname}"
+}
+
+# ========== 4. 文件校验逻辑（仅检查存在性，不计算哈希） ==========
+info_log "4. 校验模型文件"
+NEED_DOWNLOAD_MAIN=0
+NEED_DOWNLOAD_MM=0
+
+if [ -f "${HASH_FILE}" ]; then
+    info_log "检测到哈希标记文件，仅校验模型文件是否存在（不检测内容）"
+    if [ -f "${MAIN_FILE}" ] && [ -f "${MMPROJ_FILE}" ]; then
+        info_log "模型文件齐全，跳过下载"
+    else
+        info_log "模型文件缺失，需要重新下载缺失文件"
+        [ ! -f "${MAIN_FILE}" ] && NEED_DOWNLOAD_MAIN=1
+        [ ! -f "${MMPROJ_FILE}" ] && NEED_DOWNLOAD_MM=1
+    fi
 else
-    echo "✅ ${MM_PROJ_FILE} 已存在，跳过下载"
+    info_log "无哈希标记文件，需要下载所有模型文件（确保完整性）"
+    NEED_DOWNLOAD_MAIN=1
+    NEED_DOWNLOAD_MM=1
 fi
 
-if [ ! -f "${MAIN_MODEL_FILE}" ]; then
-    echo "开始下载主模型：${MAIN_MODEL_FILE}"
-    wget -c --progress=bar "${URL_MAIN_MODEL}"
-else
-    echo "✅ ${MAIN_MODEL_FILE} 已存在，跳过下载"
+# ========== 5. 下载缺失文件（覆盖模式） ==========
+if [ "${NEED_DOWNLOAD_MAIN}" -eq 1 ] || [ "${NEED_DOWNLOAD_MM}" -eq 1 ]; then
+    cd "${MODEL_DIR}"
+    [ "${NEED_DOWNLOAD_MAIN}" -eq 1 ] && download_file "${MAIN_FILE}" "${URL_MAIN_MODEL}"
+    [ "${NEED_DOWNLOAD_MM}" -eq 1 ] && download_file "${MMPROJ_FILE}" "${URL_MM_PROJ}"
+    
+    # 创建哈希标记文件（仅作为完成标记，不存储哈希值）
+    touch "${HASH_FILE}"
+    info_log "模型下载完成，哈希标记已创建"
 fi
 
-# ===================== 4. 处理CUDA压缩包 =====================
-echo -e "\n============================================="
-echo "[4/8] 处理CUDA依赖压缩包"
-
-if [ ! -f "${TAR_PACKAGE}" ]; then
-    echo "未找到压缩包，开始下载：${TAR_PACKAGE}"
-    wget -c --progress=bar "${TAR_URL}"
-else
-    echo "✅ ${TAR_PACKAGE} 已存在，跳过下载"
-fi
-
-echo "开始解压 ${TAR_PACKAGE}，自动覆盖现有文件..."
-tar -zxvf "${TAR_PACKAGE}"
-echo "✅ 压缩包解压完成"
-
-CURR_WORK_ABS=$(pwd)
-
-# ===================== 5. 生成独立启动脚本 =====================
-echo -e "\n============================================="
-echo "[5/8] 生成后续启动脚本（存放于根目录）"
-cd "${SCRIPT_ROOT}" || exit 1
-
-cat > "${START_SCRIPT_NAME}" << 'EOF'
+# ========== 6. 生成纯硬编码启动脚本 ==========
+info_log "5. 生成启动脚本：${START_SCRIPT_NAME}"
+cat > "./${START_SCRIPT_NAME}" <<EOF
 #!/bin/bash
-set -euo pipefail
-RUN_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-WORK_PATH="${RUN_ROOT}/llama.cpp_ppocrvl1.6"
-cd "${WORK_PATH}" || exit 1
-CUR_DIR=$(pwd)
-export LD_LIBRARY_PATH="${CUR_DIR}:$LD_LIBRARY_PATH"
-./llama-server \
-  -m ./PaddleOCR-VL-1.6-GGUF.gguf \
-  --mmproj ./PaddleOCR-VL-1.6-GGUF-mmproj.gguf  \
-  --port 8118  \
-  --host 0.0.0.0 \
-  --temp 0 --parallel 12 --flash-attn on -b 2048
+# PaddleOCR-VL 1.6 服务启动脚本
+# 自动生成，已匹配当前系统驱动与CUDA后端
+# 服务监听：${HOST}:${PORT}
+
+export GGML_BACKEND_PATH="${GGML_BACKEND_PATH}"
+export LD_LIBRARY_PATH="${LD_LIB_PATH}"
+export CUDA_VISIBLE_DEVICES=${CUDA_DEV}
+
+${LLAMA_SERVER_BIN} \\
+    -m ${MODEL_ABS} \\
+    --mmproj ${MMPROJ_ABS} \\
+    --port ${PORT} \\
+    --host ${HOST} \\
+    --temp ${TEMP}
 EOF
 
-chmod +x "${START_SCRIPT_NAME}"
-echo "✅ 启动脚本创建/更新成功"
-echo "📌 启动脚本绝对路径：${START_SCRIPT_FULLPATH}"
+chmod +x "./${START_SCRIPT_NAME}"
 
-# ===================== 6. 汇总文件路径 =====================
-echo -e "\n============================================="
-echo "[6/8] 全文件路径汇总"
-echo "📂 工作文件夹：${WORK_FULL_PATH}"
-echo "⚙️  主程序：${CURR_WORK_ABS}/llama-server"
-echo "📦 依赖压缩包：${CURR_WORK_ABS}/${TAR_PACKAGE}"
-echo "🧠 投影模型：${CURR_WORK_ABS}/${MM_PROJ_FILE}"
-echo "🧠 主模型：${CURR_WORK_ABS}/${MAIN_MODEL_FILE}"
-echo "🚀 后续启动脚本：bash ${START_SCRIPT_FULLPATH}"
-echo -e "\n💡 日常启动命令：./${START_SCRIPT_NAME}"
+info_log "========================================"
+info_log "所有前置校验完成，自动启动服务"
+info_log "启动脚本路径：$(pwd)/${START_SCRIPT_NAME}"
+info_log "服务地址：http://${HOST}:${PORT}"
+info_log "========================================"
 
-# ===================== 7. 临时后台启动 + 端口检测 + OCR测试 =====================
-echo -e "\n============================================="
-echo "[7/8] 临时启动服务用于功能测试（端口 8118）"
-cd "${CURR_WORK_ABS}" || exit 1
-export LD_LIBRARY_PATH="${CURR_WORK_ABS}:$LD_LIBRARY_PATH"
-echo "🔧 动态库加载路径：${LD_LIBRARY_PATH}"
-
-# 临时后台启动
-./llama-server \
-  -m ./PaddleOCR-VL-1.6-GGUF.gguf \
-  --mmproj ./PaddleOCR-VL-1.6-GGUF-mmproj.gguf  \
-  --port 8118  \
-  --host 0.0.0.0 \
-  --temp 0 --parallel 12 --flash-attn on -b 2048 &
-
-SERVER_PID=$!
-echo "🚀 临时服务启动，PID：${SERVER_PID}"
-
-# 等待端口就绪
-echo "⌛ 等待 8118 端口就绪..."
-WAIT_SEC=0
-while ! nc -z localhost 8118; do
-    sleep 2
-    WAIT_SEC=$((WAIT_SEC + 2))
-    if [ ${WAIT_SEC} -ge 60 ]; then
-        echo "[❌ 错误] 服务启动超时"
-        kill ${SERVER_PID} 2>/dev/null || true
-        exit 1
-    fi
-    echo "  已等待 ${WAIT_SEC}s"
-done
-echo "✅ 服务端口就绪"
-
-# 等待接口完全初始化
-echo "⌛ 等待接口初始化完成..."
-sleep 5
-
-# ===================== 8. OCR测试（文件传参，解决超长参数） =====================
-echo -e "\n============================================="
-echo "[8/8] 执行OCR功能测试"
-
-[ ! -f "${DEMO_PNG}" ] && curl -L -o "./${DEMO_PNG}" https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/paddleocr_vl_demo.png
-
-IMG_B64=$(base64 -w 0 "./${DEMO_PNG}")
-cat > "${TMP_JSON}" << EOF
-{
-  "model": "paddleocr-vl",
-  "messages": [
-    {
-      "role": "user",
-      "content": [
-        {"type":"text","text":"OCR:"},
-        {"type":"image_url","image_url":{"url":"data:image/png;base64,${IMG_B64}"}}
-      ]
-    }
-  ],
-  "temperature": 0
-}
-EOF
-
-echo "正在识别图片..."
-OCR_CONTENT=$(curl -s -X POST http://localhost:8118/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d @"${TMP_JSON}" | jq -r '.choices[0].message.content' | head -c 100)
-
-rm -f "${TMP_JSON}"
-
-echo -e "\n📝 OCR识别结果（前100字）："
-echo "${OCR_CONTENT}"
-
-# ===================== 关闭临时进程，全新前台正式启动 =====================
-echo -e "\n============================================="
-echo "✅ 测试完成，关闭临时服务，准备前台正式运行"
-kill ${SERVER_PID}
-sleep 2
-
-echo "🎉 正式前台启动OCR服务（端口8118）"
-echo "💡 停止服务：按下 Ctrl + C"
-# 纯前台启动，终端独占
-./llama-server \
-  -m ./PaddleOCR-VL-1.6-GGUF.gguf \
-  --mmproj ./PaddleOCR-VL-1.6-GGUF-mmproj.gguf  \
-  --port 8118  \
-  --host 0.0.0.0 \
-  --temp 0 --parallel 12 --flash-attn on -b 2048
+# ========== 7. 直接执行启动脚本 ==========
+bash "./${START_SCRIPT_NAME}"
