@@ -5,7 +5,7 @@ wget https://raw.githubusercontent.com/AuditAIH/PPOCR-VL1.6-llama.cpp/main/start
 bash start_llama_ppocrvl1.6.sh
 ```
 ```
-# PaddleOCR-VL-1.6 一键自动化部署脚本 ocrapi.sh
+# PaddleOCR-VL-1.6 一键自动化部署脚本 start_llama_ppocrvl1.6.sh
 ## 一、脚本自动完成安装/部署清单
 ### 1. 环境检测类
 1. 自动检测 NVIDIA GPU、读取 CUDA 版本，自动匹配 cu118 / cu126 / cu129 / cu130 源
