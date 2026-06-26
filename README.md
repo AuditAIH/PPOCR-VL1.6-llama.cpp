@@ -8,22 +8,25 @@ bash start_llama_ppocrvl1.6.sh
 ## 直接执行二进制程序
 
 ```
-# 创建目录并下载解压预编译包，-p确保目录存在
-# Create dir & download/extract precompiled package (-p ensures dir existence)
-mkdir -p llama.cpp_ppocrvl1.6 && wget -O - https://github.com/AuditAIH/llama.cpp_rerank/releases/download/0.0.3/0.0.3_20260610_cuda13.2_ubuntu26.04_amd64_allcuda.gz | tar -zxf - -C llama.cpp_ppocrvl1.6/
+# 下载并安装ollama
+curl -fsSL https://ollama.com/install.sh | sh
 
-# 切换工作目录到解压后的程序目录
-# Switch working directory to the extracted program directory
-cd llama.cpp_ppocrvl1.6
+# 拉取PaddleOCR-VL-1.6模型
+ollama pull AuditAid/PaddleOCR-VL-1.6-0.9B
 
-# 添加CUDA v13库路径，解决程序运行依赖，如果没有安装ollama，则需要从英伟达官网自行安装cuda13
-# Add CUDA v13 lib path to resolve program runtime dependencies
-# export LD_LIBRARY_PATH=/usr/local/lib/ollama/cuda_v13:$LD_LIBRARY_PATH
+# 直接启动ollama预编译的二进制文件和相应的OCR模型。
+export GGML_BACKEND_PATH=/usr/local/lib/ollama/cuda_v13/libggml-cuda.so
+export LD_LIBRARY_PATH=/usr/local/lib/ollama:/usr/local/lib/ollama/cuda_v13
+export CUDA_VISIBLE_DEVICES=0
 
-# 测试llama-server是否可执行，-h输出帮助信息
-# Test if llama-server is executable, -h outputs help information
-./llama-server -h
+/usr/local/lib/ollama/llama-server \
+--model /usr/share/ollama/.ollama/models/blobs/sha256-e791f710e32aef14c3c0bcdebe54f46883d49e8882ad554dab11f74f584c9387 \
+--mmproj /usr/share/ollama/.ollama/models/blobs/sha256-204d757d7610d9b3faab10d506d69e5b244e32bf765e2bab2d0167e65e0a058a \
+--port 8118 \
+--host 0.0.0.0 \
+--temp 0
 
+# 加速启动 --temp 0 --parallel 12 --flash-attn on -b 2048
 ```
 
 ## 或从源码编译
