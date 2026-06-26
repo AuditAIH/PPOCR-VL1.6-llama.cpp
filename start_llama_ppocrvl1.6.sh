@@ -1,194 +1,221 @@
 #!/bin/bash
 set -euo pipefail
-IFS=$'\n\t'
 
-# ====================== 配置区（动态适配用户目录） ======================
-OLLAMA_ROOT="/usr/local/lib/ollama"
-LLAMA_SERVER_BIN="${OLLAMA_ROOT}/llama-server"
-
-# 模型缓存路径 - modelscope默认存储路径（目录名中点号替换为下划线）
-MODEL_DIR="${HOME}/.cache/modelscope/hub/models/PaddlePaddle/PaddleOCR-VL-1___6-GGUF"
-MAIN_FILE="PaddleOCR-VL-1.6-GGUF.gguf"
-MMPROJ_FILE="PaddleOCR-VL-1.6-GGUF-mmproj.gguf"
-HASH_FILE="${MODEL_DIR}/model_hash.txt"
-MODEL_ABS="${MODEL_DIR}/${MAIN_FILE}"
-MMPROJ_ABS="${MODEL_DIR}/${MMPROJ_FILE}"
-
-# ========== 新增：模型标准SHA256（从ModelScope模型文件页获取填入） ==========
-STD_SHA256_MAIN="f3ae46ec885050acf4b3d31944431e1fd90d50664fb09126af4a3c050ba14ee8"
-STD_SHA256_MMPROJ="204d757d7610d9b3faab10d506d69e5b244e32bf765e2bab2d0167e65e0a058a"
-# ========================================================================
-
-# 下载地址
-URL_MAIN_MODEL="https://www.modelscope.cn/models/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/resolve/master/${MAIN_FILE}"
-URL_MM_PROJ="https://www.modelscope.cn/models/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/resolve/master/${MMPROJ_FILE}"
-
-# 服务固定参数
-PORT=8118
-HOST="0.0.0.0"
-TEMP=0
-CUDA_DEV=0
-START_SCRIPT_NAME="llama.cpp_paddleocr_vl_1.6.sh"
-# ========================================================================
-
-error_exit() {
-    echo -e "\033[31m[ERROR] $1\033[0m" >&2
-    exit 1
+# 彩色日志函数
+log_info() {
+    echo -e "\033[34m[INFO] $1\033[0m"
 }
-info_log() {
-    echo -e "\033[32m[INFO] $1\033[0m"
+log_warn() {
+    echo -e "\033[33m[WARN] $1\033[0m"
+}
+log_error() {
+    echo -e "\033[31m[ERROR] $1\033[0m"
+}
+log_success() {
+    echo -e "\033[32m[SUCCESS] $1\033[0m"
 }
 
-# ========== 新增：计算文件SHA256工具函数 ==========
-calc_sha256() {
-    local file_path="$1"
-    sha256sum "${file_path}" | awk '{print $1}'
-}
-
-# ========== 1. 检测GPU + 驱动版本，匹配固定CUDA后端 ==========
-info_log "1. 检测NVIDIA GPU与驱动版本"
-if ! command -v nvidia-smi &> /dev/null; then
-    error_exit "未检测到NVIDIA显卡驱动，仅支持GPU模式，不支持CPU运行"
+# ====================== 1. 检测NVIDIA GPU & CUDA ======================
+log_info "===== 1. 检测 NVIDIA GPU & CUDA 版本 ====="
+HAS_GPU=0
+CUDA_VERSION=""
+CUDA_SHORT=""
+if command -v nvidia-smi &> /dev/null; then
+    CUDA_VERSION=$(nvidia-smi | grep -oP 'CUDA Version: \K[\d.]+')
+    if [[ -n "$CUDA_VERSION" ]]; then
+        HAS_GPU=1
+        log_success "检测到NVIDIA显卡，CUDA版本：$CUDA_VERSION"
+        CUDA_MAJOR=$(echo "$CUDA_VERSION" | cut -d'.' -f1)
+        CUDA_MINOR=$(echo "$CUDA_VERSION" | cut -d'.' -f2)
+        if [[ "$CUDA_MAJOR" -eq 11 && "$CUDA_MINOR" -ge 8 ]]; then
+            CUDA_SHORT="118"
+        elif [[ "$CUDA_MAJOR" -eq 12 && "$CUDA_MINOR" -ge 6 && "$CUDA_MINOR" -lt 9 ]]; then
+            CUDA_SHORT="126"
+        elif [[ "$CUDA_MAJOR" -eq 12 && "$CUDA_MINOR" -ge 9 ]]; then
+            CUDA_SHORT="129"
+        elif [[ "$CUDA_MAJOR" -eq 13 ]]; then
+            CUDA_SHORT="130"
+        else
+            log_warn "当前CUDA $CUDA_VERSION 无匹配GPU源，切换CPU模式安装Paddle"
+            HAS_GPU=0
+        fi
+        [[ $HAS_GPU -eq 1 ]] && log_info "自动匹配Paddle CUDA源标识：cu$CUDA_SHORT"
+    else
+        log_warn "nvidia-smi存在，但未读取到CUDA版本，无可用GPU"
+    fi
+else
+    log_warn "未找到 nvidia-smi，无NVIDIA GPU环境"
 fi
 
-DRIVER_MAJOR=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 | cut -d. -f1)
-if [ -z "${DRIVER_MAJOR}" ]; then
-    error_exit "无法读取NVIDIA驱动版本，请检查显卡驱动安装"
+# ====================== 2. 无GPU交互确认CPU模式 ======================
+if [[ $HAS_GPU -eq 0 ]]; then
+    read -p "未检测到GPU，是否继续使用CPU版本运行Ollama？(y/n) " CHOICE
+    case "$CHOICE" in
+        y|Y) log_info "确认使用CPU模式，继续执行脚本" ;;
+        n|N) log_info "用户选择退出，脚本终止"; exit 0 ;;
+        *) log_error "输入无效，脚本退出"; exit 1 ;;
+    esac
 fi
-info_log "NVIDIA驱动主版本：${DRIVER_MAJOR}"
 
-# ========== 2. 检测Ollama程序，未安装则自动执行官方命令安装 ==========
-info_log "2. 检测Ollama运行环境"
-if [ ! -f "${LLAMA_SERVER_BIN}" ]; then
-    info_log "未检测到Ollama，开始自动执行官方命令安装..."
+# 定义项目绝对路径
+if [[ $HAS_GPU -eq 1 ]]; then
+    DIR_NAME="PaddleOCR-VL-1.6-gpu"
+else
+    DIR_NAME="PaddleOCR-VL-1.6-cpu"
+fi
+FULL_PROJECT_PATH=$(realpath "$DIR_NAME")
+YAML_FILE="$FULL_PROJECT_PATH/PaddleOCR-VL-1.6.yaml"
+VENV_ACTIVATE="$FULL_PROJECT_PATH/venv/bin/activate"
+
+# ====================== 3. 检测/自动安装uv ======================
+log_info -e "\n===== 2. 检测 uv 工具 ====="
+if command -v uv &> /dev/null; then
+    log_success "uv 已安装，版本：$(uv --version)"
+else
+    log_warn "未检测到uv，执行官方一键安装脚本"
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    log_success "uv 安装完成，刷新环境变量"
+    source "$HOME/.cargo/env"
+    if command -v uv &> /dev/null; then
+        log_success "uv 环境变量刷新成功，当前版本：$(uv --version)"
+    else
+        log_warn "uv 临时未生效，新开终端可正常使用uv命令"
+    fi
+fi
+
+# ====================== 4. 检测/自动安装ollama ======================
+log_info -e "\n===== 3. 检测 Ollama ====="
+if command -v ollama &> /dev/null; then
+    log_success "Ollama 已安装，版本：$(ollama --version)"
+else
+    log_warn "未检测到ollama，执行官方一键安装脚本"
     curl -fsSL https://ollama.com/install.sh | sh
-    
-    if [ ! -f "${LLAMA_SERVER_BIN}" ]; then
-        error_exit "Ollama自动安装后仍未找到llama-server，请检查上方安装日志"
+    log_success "Ollama 安装完成，刷新环境变量"
+    source /etc/profile
+    if command -v ollama &> /dev/null; then
+        log_success "Ollama 环境刷新成功，版本：$(ollama --version)"
+    else
+        log_warn "Ollama 临时未生效，新开终端可正常调用ollama命令"
     fi
-    info_log "Ollama安装完成"
 fi
-info_log "Ollama环境校验通过"
 
-if [ "${DRIVER_MAJOR}" -ge 550 ] && [ -f "${OLLAMA_ROOT}/cuda_v13/libggml-cuda.so" ]; then
-    CUDA_LIB_DIR="${OLLAMA_ROOT}/cuda_v13"
-    info_log "驱动支持CUDA 13，匹配cuda_v13后端"
-elif [ -f "${OLLAMA_ROOT}/cuda_v12/libggml-cuda.so" ]; then
-    CUDA_LIB_DIR="${OLLAMA_ROOT}/cuda_v12"
-    info_log "匹配cuda_v12后端"
+# ====================== 5. 拉取Ollama模型 ======================
+log_info -e "\n===== 4. 开始拉取模型 AuditAid/PaddleOCR-VL-1.6-0.9B ====="
+ollama pull AuditAid/PaddleOCR-VL-1.6-0.9B
+PULL_CODE=$?
+if [[ $PULL_CODE -ne 0 ]]; then
+    log_error "模型拉取失败，退出码：$PULL_CODE"
+    exit $PULL_CODE
+fi
+log_success "模型拉取完成！"
+
+# ====================== 6. 创建项目目录 ======================
+log_info -e "\n===== 5. 创建工作目录 $DIR_NAME ====="
+if [[ -d "$DIR_NAME" ]]; then
+    log_error "文件夹 $DIR_NAME 已存在！请先手动删除该文件夹后再运行脚本"
+    log_info "删除命令示例1：rm -rf $DIR_NAME"
+    log_info "通用删除命令模板：rm -rf PaddleOCR-VL-1.6-xxx"
+    exit 1
 else
-    error_exit "Ollama目录无可用CUDA后端，请手动执行 curl -fsSL https://ollama.com/install.sh | sh 重装最新版"
+    mkdir -p "$DIR_NAME"
+    log_success "成功创建目录：$FULL_PROJECT_PATH"
 fi
 
-GGML_BACKEND_PATH="${CUDA_LIB_DIR}/libggml-cuda.so"
-LD_LIB_PATH="${OLLAMA_ROOT}:${CUDA_LIB_DIR}"
+# ====================== 7. 创建 Python3.12 venv 虚拟环境 ======================
+log_info -e "\n===== 6. 在 $DIR_NAME 内创建 Python3.12 虚拟环境 venv ====="
+cd "$DIR_NAME"
+uv venv --python 3.12 venv
+log_success "Python3.12虚拟环境创建完成，路径：$FULL_PROJECT_PATH/venv"
 
-# ========== 3. 模型目录初始化 ==========
-info_log "3. 初始化模型缓存目录：${MODEL_DIR}"
-mkdir -p "${MODEL_DIR}" || error_exit "创建模型目录失败"
-cd "${MODEL_DIR}" || error_exit "进入模型目录失败"
+# ====================== 8. 子shell串行执行全套流程 ======================
+log_info -e "\n===== 7. 子shell激活虚拟环境，按顺序执行全套流程 ====="
+(
+    source venv/bin/activate
 
-# 下载函数：覆盖模式（先删除已有文件，不使用 -c 断点续传，避免文件损坏）
-download_file() {
-    local fname="$1" furl="$2"
-    info_log "开始下载：${fname}"
-    # 覆盖模式：先删除可能存在的残留/损坏文件，确保每次都是完整的全新下载
-    rm -f "${fname}"
-    if ! wget --tries=3 --timeout=30 --progress=bar "${furl}"; then
-        error_exit "下载失败: ${fname}"
-    fi
-    info_log "下载完成: ${fname}"
-}
-
-# ========== 4. 文件校验逻辑（核心修改：无哈希文件时先算本地哈希） ==========
-info_log "4. 校验模型文件"
-NEED_DOWNLOAD_MAIN=0
-NEED_DOWNLOAD_MM=0
-
-if [ -f "${HASH_FILE}" ]; then
-    # 原有逻辑完全保留：有标记文件仅检查存在性
-    info_log "检测到哈希标记文件，仅校验模型文件是否存在（不检测内容）"
-    if [ -f "${MAIN_FILE}" ] && [ -f "${MMPROJ_FILE}" ]; then
-        info_log "模型文件齐全，跳过下载"
+    # 步骤1：安装对应Paddle
+    if [[ $HAS_GPU -eq 1 ]]; then
+        PADDLE_INDEX="https://www.paddlepaddle.org.cn/packages/stable/cu$CUDA_SHORT/"
+        INSTALL_PADDLE="uv pip install paddlepaddle-gpu==3.3.1 -i $PADDLE_INDEX"
+        log_info "【子shell】步骤1：执行GPU版Paddle安装命令：$INSTALL_PADDLE"
+        $INSTALL_PADDLE
     else
-        info_log "模型文件缺失，需要重新下载缺失文件"
-        [ ! -f "${MAIN_FILE}" ] && NEED_DOWNLOAD_MAIN=1
-        [ ! -f "${MMPROJ_FILE}" ] && NEED_DOWNLOAD_MM=1
+        PADDLE_INDEX="https://www.paddlepaddle.org.cn/packages/stable/cpu/"
+        INSTALL_PADDLE="uv pip install paddlepaddle==3.3.0 -i $PADDLE_INDEX"
+        log_info "【子shell】步骤1：执行CPU版Paddle安装命令：$INSTALL_PADDLE"
+        $INSTALL_PADDLE
     fi
+
+    # 步骤2：安装paddleocr[all]
+    INSTALL_OCR="uv pip install paddleocr[all]"
+    log_info "【子shell】步骤2：Paddle安装完成，执行：$INSTALL_OCR"
+    $INSTALL_OCR
+
+    # 步骤3：更新pip
+    INSTALL_PIP="uv pip install pip"
+    log_info "【子shell】步骤3：更新pip工具，执行：$INSTALL_PIP"
+    $INSTALL_PIP
+
+    # 步骤4：安装PaddleX serving服务依赖
+    SERVING_INSTALL_CMD="paddlex --install serving"
+    log_info "【子shell】步骤4：安装PaddleX Serving依赖，执行：$SERVING_INSTALL_CMD"
+    $SERVING_INSTALL_CMD
+
+    # 步骤5：导出配置文件
+    GET_CFG_CMD="paddlex --get_pipeline_config PaddleOCR-VL-1.6 --save_path ./"
+    log_info "【子shell】步骤5：导出PaddleOCR-VL-1.6配置文件至当前目录，执行：$GET_CFG_CMD"
+    $GET_CFG_CMD
+
+    # 步骤6：sed替换yaml内genai_config配置
+    log_info "【子shell】步骤6：修改PaddleOCR-VL-1.6.yaml genai配置段落"
+    sed -i '/    genai_config:/,/      backend: native/c\    genai_config:\n      backend: llama-cpp-server\n      server_url: http://localhost:11434/v1\n      client_kwargs:\n        model_name: "AuditAid/PaddleOCR-VL-1.6-0.9B"' PaddleOCR-VL-1.6.yaml
+    log_success "YAML配置文件修改完成"
+
+    # 步骤7：检测8080端口是否占用，分配端口
+    TARGET_PORT=8080
+    check_port() {
+        local port=$1
+        ss -tulpn | grep ":$port " >/dev/null 2>&1
+        return $?
+    }
+    if check_port $TARGET_PORT; then
+        log_warn "端口8080已被占用，自动随机分配10000~20000空闲端口"
+        while true; do
+            RAND_PORT=$((10000 + RANDOM % 10001))
+            if ! check_port $RAND_PORT; then
+                TARGET_PORT=$RAND_PORT
+                break
+            fi
+        done
+    fi
+    log_info "最终使用服务端口：$TARGET_PORT"
+
+    # ===================== 关键：启动服务前打印下次启动指引 =====================
+    log_info -e "\n==================== 【重要：下次手动启动操作指引】 ===================="
+    log_info "1. 激活虚拟环境（复制整条执行）：source $VENV_ACTIVATE"
+    log_info "2. 启动OCR推理服务（默认8080）：paddlex --serve --pipeline $YAML_FILE --port 8080"
+    log_warn "提示：若8080端口被占用，可自行更换其他端口号"
+    log_info "3. API调用参考官方文档：https://www.paddleocr.ai/latest/version3.x/pipeline_usage/PaddleOCR-VL.html#43"
+    log_info "=======================================================================\n"
+
+    # 步骤8：启动paddlex服务
+    SERVE_CMD="paddlex --serve --pipeline ./PaddleOCR-VL-1.6.yaml --port $TARGET_PORT"
+    log_info "【子shell】步骤8：启动OCR推理服务，执行命令：$SERVE_CMD"
+    log_info "服务访问地址：http://127.0.0.1:$TARGET_PORT"
+    $SERVE_CMD
+)
+SUB_RET=$?
+if [[ $SUB_RET -ne 0 ]]; then
+    log_error "虚拟环境内全套流程执行失败，退出码 $SUB_RET"
+    exit $SUB_RET
+fi
+
+# ====================== Ctrl+C退出服务后再次打印提示（兜底） ======================
+log_info -e "\n==================== 服务已停止，再次附上启动指引 ===================="
+log_info "1. 激活虚拟环境：source $VENV_ACTIVATE"
+log_info "2. 启动OCR服务命令：paddlex --serve --pipeline $YAML_FILE --port 8080"
+log_info "API请求文档地址：https://www.paddleocr.ai/latest/version3.x/pipeline_usage/PaddleOCR-VL.html#43"
+if [[ $HAS_GPU -eq 1 ]]; then
+    log_info "当前环境：GPU加速 | CUDA cu$CUDA_SHORT | paddlepaddle-gpu==3.3.1"
 else
-    # 仅修改此处：无哈希文件时，先计算本地文件哈希做完整性校验
-    info_log "无哈希标记文件，先计算本地模型文件哈希进行完整性校验"
-
-    # 校验主模型文件
-    if [ -f "${MAIN_FILE}" ] && [ -n "${STD_SHA256_MAIN}" ]; then
-        local_sha_main=$(calc_sha256 "${MAIN_FILE}")
-        if [ "${local_sha_main}" = "${STD_SHA256_MAIN}" ]; then
-            info_log "主模型文件哈希校验通过，无需下载"
-        else
-            info_log "主模型文件哈希不匹配，文件损坏，需重新下载"
-            NEED_DOWNLOAD_MAIN=1
-        fi
-    else
-        info_log "主模型文件不存在或未配置标准哈希，执行下载"
-        NEED_DOWNLOAD_MAIN=1
-    fi
-
-    # 校验mmproj文件
-    if [ -f "${MMPROJ_FILE}" ] && [ -n "${STD_SHA256_MMPROJ}" ]; then
-        local_sha_mm=$(calc_sha256 "${MMPROJ_FILE}")
-        if [ "${local_sha_mm}" = "${STD_SHA256_MMPROJ}" ]; then
-            info_log "mmproj文件哈希校验通过，无需下载"
-        else
-            info_log "mmproj文件哈希不匹配，文件损坏，需重新下载"
-            NEED_DOWNLOAD_MM=1
-        fi
-    else
-        info_log "mmproj文件不存在或未配置标准哈希，执行下载"
-        NEED_DOWNLOAD_MM=1
-    fi
+    log_info "当前环境：CPU | paddlepaddle==3.3.0"
 fi
-
-# ========== 5. 下载缺失文件 ==========
-if [ "${NEED_DOWNLOAD_MAIN}" -eq 1 ] || [ "${NEED_DOWNLOAD_MM}" -eq 1 ]; then
-    cd "${MODEL_DIR}"
-    [ "${NEED_DOWNLOAD_MAIN}" -eq 1 ] && download_file "${MAIN_FILE}" "${URL_MAIN_MODEL}"
-    [ "${NEED_DOWNLOAD_MM}" -eq 1 ] && download_file "${MMPROJ_FILE}" "${URL_MM_PROJ}"
-    
-    # 下载完成后写入标准哈希到标记文件，下次启动直接走存在分支
-    cat > "${HASH_FILE}" <<EOF
-${MAIN_FILE}: ${STD_SHA256_MAIN}
-${MMPROJ_FILE}: ${STD_SHA256_MMPROJ}
-EOF
-    info_log "模型下载完成，哈希标记已创建"
-fi
-
-# ========== 6. 生成纯硬编码启动脚本 ==========
-info_log "5. 生成启动脚本：${START_SCRIPT_NAME}"
-cat > "./${START_SCRIPT_NAME}" <<EOF
-#!/bin/bash
-# PaddleOCR-VL 1.6 服务启动脚本
-# 自动生成，已匹配当前系统驱动与CUDA后端
-# 服务监听：${HOST}:${PORT}
-
-export GGML_BACKEND_PATH="${GGML_BACKEND_PATH}"
-export LD_LIBRARY_PATH="${LD_LIB_PATH}"
-export CUDA_VISIBLE_DEVICES=${CUDA_DEV}
-
-${LLAMA_SERVER_BIN} \\
-    -m ${MODEL_ABS} \\
-    --mmproj ${MMPROJ_ABS} \\
-    --port ${PORT} \\
-    --host ${HOST} \\
-    --temp ${TEMP}
-EOF
-
-chmod +x "./${START_SCRIPT_NAME}"
-
-info_log "========================================"
-info_log "所有前置校验完成，自动启动服务"
-info_log "启动脚本路径：$(pwd)/${START_SCRIPT_NAME}"
-info_log "服务地址：http://${HOST}:${PORT}"
-info_log "========================================"
-
-# ========== 7. 直接执行启动脚本 ==========
-bash "./${START_SCRIPT_NAME}"
