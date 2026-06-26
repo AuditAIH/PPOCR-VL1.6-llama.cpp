@@ -4,6 +4,46 @@
 wget https://raw.githubusercontent.com/AuditAIH/PPOCR-VL1.6-llama.cpp/main/start_llama_ppocrvl1.6.sh -O start_llama_ppocrvl1.6.sh
 bash start_llama_ppocrvl1.6.sh
 ```
+```
+# PaddleOCR-VL-1.6 一键自动化部署脚本 ocrapi.sh
+## 一、脚本自动完成安装/部署清单
+### 1. 环境检测类
+1. 自动检测 NVIDIA GPU、读取 CUDA 版本，自动匹配 cu118 / cu126 / cu129 / cu130 源
+2. 无 GPU 时交互式询问是否继续使用 CPU 模式
+3. 自动检测 uv 包管理器，不存在则执行官方脚本安装并刷新环境变量
+4. 自动检测 Ollama，不存在则一键安装 Ollama 大模型运行工具
+
+### 2. Ollama 模型拉取
+自动拉取视觉OCR大模型：`AuditAid/PaddleOCR-VL-1.6-0.9B`
+
+### 3. 项目目录创建
+根据硬件自动生成对应项目文件夹：
+- 有GPU：`PaddleOCR-VL-1.6-gpu`
+- 无GPU：`PaddleOCR-VL-1.6-cpu`
+文件夹存在则直接退出，提示删除命令避免冲突
+
+### 4. Python 虚拟环境构建
+使用 uv 创建独立 Python3.12 虚拟环境 venv，隔离项目依赖，不污染系统Python
+
+### 5. 自动安装全套Python依赖（子shell自动激活环境，无需手动切换）
+1. GPU环境：`paddlepaddle-gpu==3.3.1`（自动匹配对应CUDA镜像源）
+2. CPU环境：`paddlepaddle==3.3.0`（官方CPU专属源）
+3. 完整OCR套件：`paddleocr[all]` 全量OCR依赖
+4. 更新虚拟环境内pip工具：`uv pip install pip`
+5. PaddleX推理服务插件：`paddlex --install serving`（FastAPI/Uvicorn推理服务）
+
+### 6. 自动生成并修改推理配置文件
+1. 执行 `paddlex --get_pipeline_config` 生成 `PaddleOCR-VL-1.6.yaml` 流水线配置
+2. sed 自动替换 genai_config 配置段，对接本地 Ollama 11434 服务：
+   - backend：llama-cpp-server
+   - 服务地址：http://localhost:11434/v1
+   - 默认模型：AuditAid/PaddleOCR-VL-1.6-0.9B
+
+### 7. 端口自动适配 & 一键启动推理服务
+1. 默认优先使用 8080 端口
+2. 8080被占用则自动随机分配 10000~20000 空闲端口
+3. 自动执行 `paddlex --serve` 启动HTTP推理API服务
+```
 
 ## 直接执行二进制程序
 
