@@ -56,12 +56,12 @@ cmake --build build --config Release -j$(nproc)
 ./build/bin/llama-server -h 测试
 
 ## 下载PaddleOCR-VL1.6模型文件
-modelscope download --model Paddle/PaddleOCR-VL-1.6-GGUF README.md PaddleOCR-VL-1.6-GGUF-mmproj.gguf PaddleOCR-VL-1.6-GGUF.gguf
+modelscope download --model PaddlePaddle/PaddleOCR-VL-1.6-GGUF README.md PaddleOCR-VL-1.6-GGUF-mmproj.gguf PaddleOCR-VL-1.6-GGUF.gguf
 # 或使用wget下载
 # 下载投影文件
-wget -c https://www.modelscope.cn/models/Paddle/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF-mmproj.gguf
+wget -c https://www.modelscope.cn/models/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF-mmproj.gguf
 # 下载主模型文件
-wget -c https://www.modelscope.cn/models/Paddle/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF.gguf
+wget -c https://www.modelscope.cn/models/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/resolve/master/PaddleOCR-VL-1.6-GGUF.gguf
 
 ## 启动OCR识别
 # 直接启动8118端口
