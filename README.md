@@ -116,8 +116,11 @@ python -m pip install paddlepaddle-gpu==3.3.1 -i https://www.paddlepaddle.org.cn
 python -m pip install "paddleocr[all]"
 # uv pip install "paddleocr[all]"
 
-# 用版面解析前，请先确保按照前序步骤启动好8118端口的vlm后端。
+# 用版面解析前，请先确保按照前序步骤启动好8118端口的vlm后端或安装好ollama并下载好模型。
 paddleocr doc_parser --input https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/paddleocr_vl_demo.png --vl_rec_backend llama-cpp-server --vl_rec_server_url http://localhost:8118/v1
+
+paddleocr doc_parser   --input https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/paddleocr_vl_demo.png   --vl_rec_backend llama-cpp-server   --vl_rec_server_url http://localhost:11434/v1   --vl_rec_api_model_name "AuditAid/PaddleOCR-VL-1.6-0.9B"
+
 
 # [服务化部署，请参考官方](https://www.paddleocr.ai/main/version3.x/pipeline_usage/PaddleOCR-VL.html#441)
 paddlex --install serving
