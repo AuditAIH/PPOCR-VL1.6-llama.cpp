@@ -27,6 +27,11 @@ export CUDA_VISIBLE_DEVICES=0
 --temp 0
 
 # 加速启动 --temp 0 --parallel 12 --flash-attn on -b 2048
+
+# 或由ollama的11434端口接管，自动加载和卸载模型
+wget https://raw.githubusercontent.com/AuditAIH/PPOCR-VL1.6-llama.cpp/main/ocr_llama_proxy.py -O ocr_llama_proxy.py
+python ocr_llama_proxy.py
+
 ```
 
 ## 或从源码编译
@@ -123,6 +128,17 @@ python -m pip install paddlepaddle-gpu==3.3.1 -i https://www.paddlepaddle.org.cn
 # uv pip install paddlepaddle-gpu==3.3.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/
 python -m pip install "paddleocr[all]"
 # uv pip install "paddleocr[all]"
+
+# 用版面解析前，请先确保按照前序步骤启动好8118端口的vlm后端。
 paddleocr doc_parser --input https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/paddleocr_vl_demo.png --vl_rec_backend llama-cpp-server --vl_rec_server_url http://localhost:8118/v1
+
+# [服务化部署，请参考官方](https://www.paddleocr.ai/main/version3.x/pipeline_usage/PaddleOCR-VL.html#441)
+paddlex --install serving
+paddlex --get_pipeline_config PaddleOCR-VL-1.6
+
+# 替换配置文件，增加8118后端
+sed -i '/genai_config:/,/      backend: native/c\    genai_config:\n      backend: llama-cpp-server\n      server_url: http://localhost:8118/v1' PaddleOCR-VL-1.6.yaml
+# 默认开放在8080端口，请先确保端口不被占用
+paddlex --serve --pipeline ./PaddleOCR-VL-1.6.yaml --port 8080
 
 ```
