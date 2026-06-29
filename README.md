@@ -1,3 +1,4 @@
+# [合并至新位置](https://github.com/AuditAIH/audit-tool-skills/tree/main/Rerank)
 # 快速开始 （Quick Start） 
 ## 如需代理请在github的http前面追加https://gh-proxy.org/https://raw.git...
 ```
