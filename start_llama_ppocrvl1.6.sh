@@ -170,7 +170,7 @@ log_info -e "\n===== 7. 子shell激活虚拟环境，按顺序执行全套流程
     sed -i '/    genai_config:/,/      backend: native/c\    genai_config:\n      backend: llama-cpp-server\n      server_url: http://localhost:11434/v1\n      client_kwargs:\n        model_name: "AuditAid/PaddleOCR-VL-1.6-0.9B"' PaddleOCR-VL-1.6.yaml
     log_success "YAML配置文件修改完成"
 
-    # 步骤7：检测8080端口是否占用，分配端口
+    # 步骤7：检测8080端口是否占用，从8081顺序顺延查找空闲端口
     TARGET_PORT=8080
     check_port() {
         local port=$1
@@ -178,13 +178,10 @@ log_info -e "\n===== 7. 子shell激活虚拟环境，按顺序执行全套流程
         return $?
     }
     if check_port $TARGET_PORT; then
-        log_warn "端口8080已被占用，自动随机分配10000~20000空闲端口"
-        while true; do
-            RAND_PORT=$((10000 + RANDOM % 10001))
-            if ! check_port $RAND_PORT; then
-                TARGET_PORT=$RAND_PORT
-                break
-            fi
+        log_warn "端口8080已被占用，从8081开始依次查找空闲端口"
+        TARGET_PORT=8081
+        while check_port $TARGET_PORT; do
+            TARGET_PORT=$((TARGET_PORT + 1))
         done
     fi
     log_info "最终使用服务端口：$TARGET_PORT"
